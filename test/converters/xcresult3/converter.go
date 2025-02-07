@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"howett.net/plist"
@@ -146,12 +145,8 @@ func genTestSuite(name string,
 	xcresultPath string,
 	maxParallel int,
 ) (junit.TestSuite, error) {
-	var (
-		start           = time.Now()
-		genTestSuiteErr error
-		wg              sync.WaitGroup
-		mtx             sync.RWMutex
-	)
+	var genTestSuiteErr error
+	suiteStart := time.Now()
 
 	testSuite := junit.TestSuite{
 		Name:      name,
@@ -162,33 +157,64 @@ func genTestSuite(name string,
 		TestCases: make([]junit.TestCase, len(tests)),
 	}
 
-	testIdx := 0
-	for testIdx < len(tests) {
-		for i := 0; i < maxParallel && testIdx < len(tests); i++ {
-			test := tests[testIdx]
-			wg.Add(1)
-
-			go func(test ActionTestSummaryGroup, testIdx int) {
-				defer wg.Done()
-
-				testCase, err := genTestCase(test, xcresultPath, testResultDir)
-				if err != nil {
-					mtx.Lock()
-					genTestSuiteErr = err
-					mtx.Unlock()
-				}
-
-				testSuite.TestCases[testIdx] = testCase
-			}(test, testIdx)
-
-			testIdx++
-		}
-
-		wg.Wait()
+	type testJob struct {
+		test ActionTestSummaryGroup
+		idx  int
 	}
 
-	log.Debugf("Generating test suite [%s] (%d tests) - DONE %v", name, len(tests), time.Since(start))
+	type testResult struct {
+		testCase junit.TestCase
+		idx      int
+		err      error
+		duration time.Duration
+	}
 
+	// Create and fill jobs channel
+	jobs := make(chan testJob, len(tests))
+	for i, test := range tests {
+		jobs <- testJob{test: test, idx: i}
+	}
+	close(jobs)
+
+	results := make(chan testResult, len(tests))
+
+	// Start worker pool
+	for i := 0; i < maxParallel; i++ {
+		go func(workerID int) {
+			for job := range jobs {
+				start := time.Now()
+				log.Debugf("Worker %d starting test: %s", workerID, job.test.Name)
+
+				testCase, err := genTestCase(job.test, xcresultPath, testResultDir)
+				duration := time.Since(start)
+
+				if duration > time.Second*10 {
+					log.Debugf("Slow test case on worker %d: test %s took %v", workerID, job.test.Name, duration)
+				}
+
+				results <- testResult{
+					testCase: testCase,
+					idx:      job.idx,
+					err:      err,
+					duration: duration,
+				}
+
+				log.Debugf("Worker %d finished test %s in %v", workerID, job.test.Name, duration)
+			}
+		}(i)
+	}
+
+	// Collect results
+	for i := 0; i < len(tests); i++ {
+		result := <-results
+		if result.err != nil {
+			genTestSuiteErr = result.err
+			log.Debugf("Test failed: %v", result.err)
+		}
+		testSuite.TestCases[result.idx] = result.testCase
+	}
+
+	log.Debugf("Test suite [%s] complete - %d tests in %v", name, len(tests), time.Since(suiteStart))
 	return testSuite, genTestSuiteErr
 }
 
