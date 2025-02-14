@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"howett.net/plist"
@@ -251,9 +252,24 @@ func genTestSuite(name string,
 		TestCases: make([]junit.TestCase, len(tests)),
 	}
 
-	// Use adaptive worker count
-	maxParallel = AdjustMaxParallel()
-	log.Debugf("Using %d workers for test suite [%s]", maxParallel, name)
+	// Initialize atomic worker count
+	currentMaxParallel := atomic.Int32{}
+	currentMaxParallel.Store(int32(AdjustMaxParallel()))
+	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
+
+	// Start periodic health check
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	go func() {
+		for range ticker.C {
+			newCount := AdjustMaxParallel()
+			oldCount := currentMaxParallel.Swap(int32(newCount))
+			if oldCount != int32(newCount) {
+				log.Debugf("Adjusting worker count from %d to %d", oldCount, newCount)
+			}
+		}
+	}()
 
 	type testJob struct {
 		test ActionTestSummaryGroup
@@ -276,10 +292,20 @@ func genTestSuite(name string,
 
 	results := make(chan testResult, len(tests))
 
-	// Start worker pool
-	for i := 0; i < maxParallel; i++ {
+	// Start worker pool with dynamic size management
+	activeWorkers := atomic.Int32{}
+	for i := 0; i < int(currentMaxParallel.Load()); i++ {
+		activeWorkers.Add(1)
 		go func(workerID int) {
+			defer activeWorkers.Add(-1)
+
 			for job := range jobs {
+				// Check if we should exit based on current worker count
+				if int32(workerID) >= currentMaxParallel.Load() {
+					log.Debugf("Worker %d stopping due to reduced worker count", workerID)
+					break
+				}
+
 				start := time.Now()
 				log.Debugf("Worker %d starting test: %s", workerID, job.test.Name)
 
@@ -310,6 +336,24 @@ func genTestSuite(name string,
 			log.Debugf("Test failed: %v", result.err)
 		}
 		testSuite.TestCases[result.idx] = result.testCase
+
+		// Start additional workers if needed
+		currentWorkers := activeWorkers.Load()
+		targetWorkers := currentMaxParallel.Load()
+		if currentWorkers < targetWorkers {
+			for workerID := currentWorkers; workerID < targetWorkers; workerID++ {
+				activeWorkers.Add(1)
+				go func(id int) {
+					defer activeWorkers.Add(-1)
+					for job := range jobs {
+						start := time.Now()
+						log.Debugf("New worker %d starting test: %s", id, job.test.Name)
+						testCase, err := genTestCase(job.test, xcresultPath, testResultDir)
+						results <- testResult{testCase: testCase, idx: job.idx, err: err, duration: time.Since(start)}
+					}
+				}(int(workerID))
+			}
+		}
 	}
 
 	log.Debugf("Test suite [%s] complete - %d tests in %v", name, len(tests), time.Since(suiteStart))
