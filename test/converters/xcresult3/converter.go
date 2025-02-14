@@ -3,7 +3,6 @@ package xcresult3
 import (
 	"errors"
 	"fmt"
-	"math"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -155,33 +154,49 @@ func getOptimalWorkerCount() int {
 	log.Debugf("System load averages - 1min: %.2f, 5min: %.2f, 15min: %.2f",
 		info.Load1, info.Load5, info.Load15)
 
-	cpuFloat := float64(cpuCount)
-	load1 := info.Load1
+	// Calculate load per CPU
+	loadPerCPU := info.Load1 / float64(cpuCount)
+	log.Debugf("Current load per CPU: %.2f", loadPerCPU)
 
-	// Calculate available CPU capacity
-	availableCapacity := cpuFloat - load1
-	log.Debugf("Available CPU capacity: %.2f (CPU count: %d - Load: %.2f)",
-		availableCapacity, cpuCount, load1)
+	// Determine optimal worker count based on system load
+	var workerCount int
+	switch {
+	case loadPerCPU >= 1.0:
+		// System is heavily loaded (more than 1 process per CPU)
+		workerCount = max(1, cpuCount/4)
+		log.Debugf("System heavily loaded (%.2f load per CPU), reducing workers to %d",
+			loadPerCPU, workerCount)
 
-	if availableCapacity < 1 {
-		log.Debugf("System under heavy load, using minimum worker count: 1")
-		return 1
+	case loadPerCPU >= 0.7:
+		// System is moderately loaded
+		workerCount = max(1, cpuCount/2)
+		log.Debugf("System moderately loaded (%.2f load per CPU), setting workers to %d",
+			loadPerCPU, workerCount)
+
+	default:
+		// System has capacity
+		// Use up to 75% of available CPUs
+		workerCount = max(1, int(float64(cpuCount)*0.75))
+		log.Debugf("System lightly loaded (%.2f load per CPU), setting workers to %d",
+			loadPerCPU, workerCount)
 	}
-
-	// Use 75% of available capacity
-	optimal := int(math.Ceil(availableCapacity * 0.75))
 
 	// Cap maximum workers
 	maxWorkers := runtime.NumCPU() * 2
-	if optimal > maxWorkers {
-		log.Debugf("Calculated workers (%d) exceeds maximum (%d), capping worker count",
-			optimal, maxWorkers)
+	if workerCount > maxWorkers {
+		log.Debugf("Capping worker count from %d to maximum %d",
+			workerCount, maxWorkers)
 		return maxWorkers
 	}
 
-	log.Debugf("Final worker count: %d (75%% of available capacity: %.2f)",
-		optimal, availableCapacity*0.75)
-	return optimal
+	return workerCount
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func genTestSuite(name string,
