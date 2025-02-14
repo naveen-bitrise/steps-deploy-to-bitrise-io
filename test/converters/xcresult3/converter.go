@@ -320,7 +320,7 @@ func genTestSuite(name string,
 	close(jobs)
 
 	// Start health check and worker management
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
 	go func() {
