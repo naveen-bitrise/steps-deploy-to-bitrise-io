@@ -17,7 +17,7 @@ import (
 	"github.com/bitrise-io/go-xcode/xcodeproject/serialized"
 	"github.com/bitrise-steplib/steps-deploy-to-bitrise-io/test/junit"
 
-	"github.com/shirou/gopsutil/load"
+	"github.com/shirou/gopsutil/v3/cpu"
 )
 
 // Converter ...
@@ -140,60 +140,93 @@ func testSuiteCountInSummaries(summaries []ActionTestPlanRunSummaries) int {
 	return testSuiteCount
 }
 
-func getOptimalWorkerCount() int {
-	cpuCount := runtime.NumCPU()
-	log.Debugf("Current CPU count: %d", cpuCount)
-
-	// Get current CPU load averages
-	info, err := load.Avg()
+// GetCPUUsage returns the average CPU usage as a percentage.
+func GetCPUUsage() (float64, error) {
+	// Get the CPU usage for each core with 0 interval
+	cpuPercentages, err := cpu.Percent(0, true)
 	if err != nil {
-		log.Debugf("Error getting load info: %v, falling back to CPU count", err)
-		return runtime.NumCPU()
+		return 0, err
 	}
 
-	log.Debugf("System load averages - 1min: %.2f, 5min: %.2f, 15min: %.2f",
-		info.Load1, info.Load5, info.Load15)
+	var total float64
+	for _, percentage := range cpuPercentages {
+		total += percentage
+	}
 
-	// Calculate load per CPU
-	loadPerCPU := info.Load1 / float64(cpuCount)
-	log.Debugf("Current load per CPU: %.2f", loadPerCPU)
+	// Calculate average CPU usage
+	avgUsage := total / float64(len(cpuPercentages))
+	return avgUsage, nil
+}
 
-	// Determine optimal worker count based on system load
-	var workerCount int
+// AdjustMaxParallel adjusts maxParallel based on current CPU usage.
+func AdjustMaxParallel() int {
+	// Get current CPU load
+	cpuLoad, err := GetCPUUsage()
+	if err != nil {
+		log.Debugf("Error getting CPU usage: %v, falling back to default", err)
+		return runtime.NumCPU() * 2 // Fallback to default
+	}
+
+	cpuCount := runtime.NumCPU()
+	baseMaxParallel := cpuCount * 2
+
+	log.Debugf("Current CPU Usage: %.2f%%, CPU Count: %d, Base parallel: %d",
+		cpuLoad, cpuCount, baseMaxParallel)
+
+	// More granular adjustment based on CPU load
+	var adjustedParallel int
 	switch {
-	case loadPerCPU >= 1.0:
-		// System is heavily loaded (more than 1 process per CPU)
-		workerCount = max(1, cpuCount/4)
-		log.Debugf("System heavily loaded (%.2f load per CPU), reducing workers to %d",
-			loadPerCPU, workerCount)
+	case cpuLoad >= 90:
+		// Very high load - reduce to 1/4
+		adjustedParallel = max(1, baseMaxParallel/4)
+		log.Debugf("Very high CPU load (%.2f%%), reducing workers to %d",
+			cpuLoad, adjustedParallel)
 
-	case loadPerCPU >= 0.7:
-		// System is moderately loaded
-		workerCount = max(1, cpuCount/2)
-		log.Debugf("System moderately loaded (%.2f load per CPU), setting workers to %d",
-			loadPerCPU, workerCount)
+	case cpuLoad >= 80:
+		// High load - reduce to 1/2
+		adjustedParallel = max(1, baseMaxParallel/2)
+		log.Debugf("High CPU load (%.2f%%), reducing workers to %d",
+			cpuLoad, adjustedParallel)
+
+	case cpuLoad >= 60:
+		// Moderate high load - reduce by 25%
+		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
+		log.Debugf("Moderately high CPU load (%.2f%%), setting workers to %d",
+			cpuLoad, adjustedParallel)
+
+	case cpuLoad <= 20:
+		// Very low load - can increase up to 4x
+		maxIncrease := cpuCount * 4
+		adjustedParallel = min(baseMaxParallel*2, maxIncrease)
+		log.Debugf("Very low CPU load (%.2f%%), increasing workers to %d",
+			cpuLoad, adjustedParallel)
+
+	case cpuLoad <= 40:
+		// Low load - can increase up to 2x
+		maxIncrease := cpuCount * 3
+		adjustedParallel = min(baseMaxParallel*3/2, maxIncrease)
+		log.Debugf("Low CPU load (%.2f%%), increasing workers to %d",
+			cpuLoad, adjustedParallel)
 
 	default:
-		// System has capacity
-		// Use up to 75% of available CPUs
-		workerCount = max(1, int(float64(cpuCount)*0.75))
-		log.Debugf("System lightly loaded (%.2f load per CPU), setting workers to %d",
-			loadPerCPU, workerCount)
+		// Moderate load - keep base parallel
+		adjustedParallel = baseMaxParallel
+		log.Debugf("Moderate CPU load (%.2f%%), maintaining default workers at %d",
+			cpuLoad, adjustedParallel)
 	}
 
-	// Cap maximum workers
-	maxWorkers := runtime.NumCPU() * 2
-	if workerCount > maxWorkers {
-		log.Debugf("Capping worker count from %d to maximum %d",
-			workerCount, maxWorkers)
-		return maxWorkers
-	}
-
-	return workerCount
+	return adjustedParallel
 }
 
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
