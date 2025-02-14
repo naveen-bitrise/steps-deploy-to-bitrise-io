@@ -3,6 +3,7 @@ package xcresult3
 import (
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -16,6 +17,8 @@ import (
 	"github.com/bitrise-io/go-utils/pathutil"
 	"github.com/bitrise-io/go-xcode/xcodeproject/serialized"
 	"github.com/bitrise-steplib/steps-deploy-to-bitrise-io/test/junit"
+
+	"github.com/shirou/gopsutil/load"
 )
 
 // Converter ...
@@ -138,6 +141,49 @@ func testSuiteCountInSummaries(summaries []ActionTestPlanRunSummaries) int {
 	return testSuiteCount
 }
 
+func getOptimalWorkerCount() int {
+	cpuCount := runtime.NumCPU()
+	log.Debugf("Current CPU count: %d", cpuCount)
+
+	// Get current CPU load averages
+	info, err := load.Avg()
+	if err != nil {
+		log.Debugf("Error getting load info: %v, falling back to CPU count", err)
+		return runtime.NumCPU()
+	}
+
+	log.Debugf("System load averages - 1min: %.2f, 5min: %.2f, 15min: %.2f",
+		info.Load1, info.Load5, info.Load15)
+
+	cpuFloat := float64(cpuCount)
+	load1 := info.Load1
+
+	// Calculate available CPU capacity
+	availableCapacity := cpuFloat - load1
+	log.Debugf("Available CPU capacity: %.2f (CPU count: %d - Load: %.2f)",
+		availableCapacity, cpuCount, load1)
+
+	if availableCapacity < 1 {
+		log.Debugf("System under heavy load, using minimum worker count: 1")
+		return 1
+	}
+
+	// Use 75% of available capacity
+	optimal := int(math.Ceil(availableCapacity * 0.75))
+
+	// Cap maximum workers
+	maxWorkers := runtime.NumCPU() * 2
+	if optimal > maxWorkers {
+		log.Debugf("Calculated workers (%d) exceeds maximum (%d), capping worker count",
+			optimal, maxWorkers)
+		return maxWorkers
+	}
+
+	log.Debugf("Final worker count: %d (75%% of available capacity: %.2f)",
+		optimal, availableCapacity*0.75)
+	return optimal
+}
+
 func genTestSuite(name string,
 	summary ActionTestPlanRunSummaries,
 	tests []ActionTestSummaryGroup,
@@ -156,6 +202,10 @@ func genTestSuite(name string,
 		Time:      summary.totalTime(name),
 		TestCases: make([]junit.TestCase, len(tests)),
 	}
+
+	// Use adaptive worker count
+	maxParallel := getOptimalWorkerCount()
+	log.Debugf("Using %d workers for test suite [%s]", maxParallel, name)
 
 	type testJob struct {
 		test ActionTestSummaryGroup
