@@ -204,7 +204,7 @@ func genTestSuite(name string,
 	}
 
 	// Use adaptive worker count
-	maxParallel := getOptimalWorkerCount()
+	maxParallel = getOptimalWorkerCount()
 	log.Debugf("Using %d workers for test suite [%s]", maxParallel, name)
 
 	type testJob struct {
