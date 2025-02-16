@@ -188,16 +188,25 @@ func GetTopProcesses(topN int) {
 
 	// Iterate through processes and collect relevant details
 	for _, p := range processes {
+		// Get the process name
+		name, err := p.Name()
+		if err != nil {
+			continue
+		}
+
+		// Get CPU usage for the process
 		cpuPercent, err := p.CPUPercent()
 		if err != nil {
 			continue
 		}
 
+		// Get memory usage for the process
 		memoryInfo, err := p.MemoryInfo()
 		if err != nil {
 			continue
 		}
 
+		// Append the process information
 		processInfo = append(processInfo, struct {
 			PID    int32
 			Name   string
@@ -205,9 +214,9 @@ func GetTopProcesses(topN int) {
 			Memory float32
 		}{
 			PID:    p.Pid,
-			Name:   p.Name,
-			CPU:    cpuPercent,
-			Memory: float32(memoryInfo.RSS) / 1024 / 1024, // Convert to MB
+			Name:   name,                                  // Use the process name from Name()
+			CPU:    float32(cpuPercent),                   // Cast cpuPercent to float32
+			Memory: float32(memoryInfo.RSS) / 1024 / 1024, // Convert memory to MB
 		})
 	}
 
@@ -307,6 +316,7 @@ func AdjustMaxParallel() int {
 		adjustedParallel = min(baseMaxParallel*2, maxIncrease)
 		log.Debugf("Very low CPU load (%.2f%%), increasing workers to %d",
 			cpuLoad, adjustedParallel)
+		GetTopProcesses(5) // Log top processes when under heavy load
 
 	case cpuLoad <= 40:
 		// Low load - can increase up to 2x
@@ -314,12 +324,14 @@ func AdjustMaxParallel() int {
 		adjustedParallel = min(baseMaxParallel*3/2, maxIncrease)
 		log.Debugf("Low CPU load (%.2f%%), increasing workers to %d",
 			cpuLoad, adjustedParallel)
+		GetTopProcesses(5) // Log top processes when under heavy load
 
 	default:
 		// Moderate load - keep base parallel
 		adjustedParallel = baseMaxParallel
 		log.Debugf("Moderate CPU load (%.2f%%), maintaining default workers at %d",
 			cpuLoad, adjustedParallel)
+		GetTopProcesses(5) // Log top processes when under heavy load
 	}
 
 	return adjustedParallel
