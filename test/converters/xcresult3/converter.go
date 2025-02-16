@@ -175,7 +175,7 @@ func GetMemoryUsage() (float64, error) {
 func GetTopProcesses(topN int) {
 	processes, err := process.Processes()
 	if err != nil {
-		log.Printf("Error fetching processes: %v", err)
+		log.Debugf("Error fetching processes: %v", err)
 		return
 	}
 
@@ -276,7 +276,7 @@ func AdjustMaxParallel() int {
 
 	memoryLoad, err := GetMemoryUsage()
 	if err != nil {
-		log.Printf("Error getting memory usage: %v, falling back to default", err)
+		log.Debugf("Error getting memory usage: %v, falling back to default", err)
 		return runtime.NumCPU() * 2 // Fallback to default
 	}
 
