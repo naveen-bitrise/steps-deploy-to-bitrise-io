@@ -3,6 +3,7 @@ package xcresult3
 import (
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -18,6 +19,8 @@ import (
 	"github.com/bitrise-io/go-xcode/xcodeproject/serialized"
 	"github.com/bitrise-steplib/steps-deploy-to-bitrise-io/test/junit"
 
+	"github.com/shirou/gopsutil/mem"
+	"github.com/shirou/gopsutil/process"
 	"github.com/shirou/gopsutil/v3/cpu"
 )
 
@@ -159,6 +162,109 @@ func GetCPUUsage() (float64, error) {
 	return avgUsage, nil
 }
 
+// GetMemoryUsage returns the current system memory usage as a percentage.
+func GetMemoryUsage() (float64, error) {
+	vmStat, err := mem.VirtualMemory()
+	if err != nil {
+		return 0, err
+	}
+	return vmStat.UsedPercent, nil
+}
+
+// GetTopProcesses logs the top N processes by CPU and memory usage.
+func GetTopProcesses(topN int) {
+	processes, err := process.Processes()
+	if err != nil {
+		log.Printf("Error fetching processes: %v", err)
+		return
+	}
+
+	var processInfo []struct {
+		PID    int32
+		Name   string
+		CPU    float32
+		Memory float32
+	}
+
+	// Iterate through processes and collect relevant details
+	for _, p := range processes {
+		// Get the process name
+		name, err := p.Name()
+		if err != nil {
+			continue
+		}
+
+		// Get CPU usage for the process
+		cpuPercent, err := p.CPUPercent()
+		if err != nil {
+			continue
+		}
+
+		// Get memory usage for the process
+		memoryInfo, err := p.MemoryInfo()
+		if err != nil {
+			continue
+		}
+
+		// Append the process information
+		processInfo = append(processInfo, struct {
+			PID    int32
+			Name   string
+			CPU    float32
+			Memory float32
+		}{
+			PID:    p.Pid,
+			Name:   name,                                  // Use the process name from Name()
+			CPU:    float32(cpuPercent),                   // Cast cpuPercent to float32
+			Memory: float32(memoryInfo.RSS) / 1024 / 1024, // Convert memory to MB
+		})
+	}
+
+	// Sort processes by CPU usage in descending order
+	sortedByCPU := make([]struct {
+		PID    int32
+		Name   string
+		CPU    float32
+		Memory float32
+	}, len(processInfo))
+	copy(sortedByCPU, processInfo)
+	for i := 0; i < len(sortedByCPU); i++ {
+		for j := i + 1; j < len(sortedByCPU); j++ {
+			if sortedByCPU[i].CPU < sortedByCPU[j].CPU {
+				sortedByCPU[i], sortedByCPU[j] = sortedByCPU[j], sortedByCPU[i]
+			}
+		}
+	}
+
+	// Sort processes by memory usage in descending order
+	sortedByMemory := make([]struct {
+		PID    int32
+		Name   string
+		CPU    float32
+		Memory float32
+	}, len(processInfo))
+	copy(sortedByMemory, processInfo)
+	for i := 0; i < len(sortedByMemory); i++ {
+		for j := i + 1; j < len(sortedByMemory); j++ {
+			if sortedByMemory[i].Memory < sortedByMemory[j].Memory {
+				sortedByMemory[i], sortedByMemory[j] = sortedByMemory[j], sortedByMemory[i]
+			}
+		}
+	}
+
+	// Log top N processes by CPU usage
+	log.Debugf("\nTop processes by CPU usage:")
+	for i := 0; i < int(math.Min(float64(topN), float64(len(sortedByCPU)))); i++ {
+		log.Debugf("PID: %d, Name: %s, CPU: %.2f%%, Memory: %.2fMB", sortedByCPU[i].PID, sortedByCPU[i].Name, sortedByCPU[i].CPU, sortedByCPU[i].Memory)
+	}
+
+	// Log top N processes by Memory usage
+	log.Debugf("Top processes by Memory usage:")
+	for i := 0; i < int(math.Min(float64(topN), float64(len(sortedByMemory)))); i++ {
+		log.Debugf("PID: %d, Name: %s, CPU: %.2f%%, Memory: %.2fMB", sortedByMemory[i].PID, sortedByMemory[i].Name, sortedByMemory[i].CPU, sortedByMemory[i].Memory)
+	}
+}
+
 // AdjustMaxParallel adjusts maxParallel based on current CPU usage.
 func AdjustMaxParallel() int {
 	// Get current CPU load
@@ -168,32 +274,41 @@ func AdjustMaxParallel() int {
 		return runtime.NumCPU() * 2 // Fallback to default
 	}
 
+	memoryLoad, err := GetMemoryUsage()
+	if err != nil {
+		log.Printf("Error getting memory usage: %v, falling back to default", err)
+		return runtime.NumCPU() * 2 // Fallback to default
+	}
+
 	cpuCount := runtime.NumCPU()
 	baseMaxParallel := cpuCount * 2
 
-	log.Debugf("Current CPU Usage: %.2f%%, CPU Count: %d, Base parallel: %d",
-		cpuLoad, cpuCount, baseMaxParallel)
+	log.Debugf("Current CPU Usage: %.2f%%, Memory Usage: %.2f%%, CPU Count: %d, Base parallel: %d",
+		cpuLoad, memoryLoad, cpuCount, baseMaxParallel)
 
 	// More granular adjustment based on CPU load
 	var adjustedParallel int
 	switch {
-	case cpuLoad >= 90:
+	case cpuLoad >= 90 || memoryLoad >= 90:
 		// Very high load - reduce to 1/4
 		adjustedParallel = max(1, baseMaxParallel/4)
 		log.Debugf("Very high CPU load (%.2f%%), reducing workers to %d",
 			cpuLoad, adjustedParallel)
+		GetTopProcesses(5) // Log top processes when under heavy load
 
-	case cpuLoad >= 80:
+	case cpuLoad >= 80 || memoryLoad >= 80:
 		// High load - reduce to 1/2
 		adjustedParallel = max(1, baseMaxParallel/2)
 		log.Debugf("High CPU load (%.2f%%), reducing workers to %d",
 			cpuLoad, adjustedParallel)
+		GetTopProcesses(5) // Log top processes when under heavy load
 
-	case cpuLoad >= 60:
+	case cpuLoad >= 60 || memoryLoad >= 60:
 		// Moderate high load - reduce by 25%
 		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
 		log.Debugf("Moderately high CPU load (%.2f%%), setting workers to %d",
 			cpuLoad, adjustedParallel)
+		GetTopProcesses(5) // Log top processes when under heavy load
 
 	case cpuLoad <= 20:
 		// Very low load - can increase up to 4x
