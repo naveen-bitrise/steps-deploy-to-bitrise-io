@@ -253,13 +253,13 @@ func GetTopProcesses(topN int) {
 	}
 
 	// Log top N processes by CPU usage
-	log.Debugf("Top processes by CPU usage:")
+	log.Debugf("\nTop processes by CPU usage:")
 	for i := 0; i < int(math.Min(float64(topN), float64(len(sortedByCPU)))); i++ {
 		log.Debugf("PID: %d, Name: %s, CPU: %.2f%%, Memory: %.2fMB", sortedByCPU[i].PID, sortedByCPU[i].Name, sortedByCPU[i].CPU, sortedByCPU[i].Memory)
 	}
 
 	// Log top N processes by Memory usage
-	log.Debugf("\nTop processes by Memory usage:")
+	log.Debugf("Top processes by Memory usage:")
 	for i := 0; i < int(math.Min(float64(topN), float64(len(sortedByMemory)))); i++ {
 		log.Debugf("PID: %d, Name: %s, CPU: %.2f%%, Memory: %.2fMB", sortedByMemory[i].PID, sortedByMemory[i].Name, sortedByMemory[i].CPU, sortedByMemory[i].Memory)
 	}
@@ -316,7 +316,6 @@ func AdjustMaxParallel() int {
 		adjustedParallel = min(baseMaxParallel*2, maxIncrease)
 		log.Debugf("Very low CPU load (%.2f%%), increasing workers to %d",
 			cpuLoad, adjustedParallel)
-		GetTopProcesses(5) // Log top processes when under heavy load
 
 	case cpuLoad <= 40:
 		// Low load - can increase up to 2x
@@ -324,14 +323,12 @@ func AdjustMaxParallel() int {
 		adjustedParallel = min(baseMaxParallel*3/2, maxIncrease)
 		log.Debugf("Low CPU load (%.2f%%), increasing workers to %d",
 			cpuLoad, adjustedParallel)
-		GetTopProcesses(5) // Log top processes when under heavy load
 
 	default:
 		// Moderate load - keep base parallel
 		adjustedParallel = baseMaxParallel
 		log.Debugf("Moderate CPU load (%.2f%%), maintaining default workers at %d",
 			cpuLoad, adjustedParallel)
-		GetTopProcesses(5) // Log top processes when under heavy load
 	}
 
 	return adjustedParallel
