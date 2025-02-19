@@ -289,24 +289,10 @@ func AdjustMaxParallel() int {
 	// More granular adjustment based on CPU load
 	var adjustedParallel int
 	switch {
-	case cpuLoad >= 90 || memoryLoad >= 90:
+	case cpuLoad >= 98 || memoryLoad >= 98:
 		// Very high load - reduce to 1/4
-		adjustedParallel = max(1, baseMaxParallel/2)
-		log.Debugf("Very high CPU load (%.2f%%), reducing workers to %d",
-			cpuLoad, adjustedParallel)
-		GetTopProcesses(5) // Log top processes when under heavy load
-
-	case cpuLoad >= 80 || memoryLoad >= 80:
-		// High load - reduce to 1/2
 		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
-		log.Debugf("High CPU load (%.2f%%), reducing workers to %d",
-			cpuLoad, adjustedParallel)
-		GetTopProcesses(5) // Log top processes when under heavy load
-
-	case cpuLoad >= 60 || memoryLoad >= 60:
-		// Moderate high load - reduce by 25%
-		adjustedParallel = max(1, baseMaxParallel-1)
-		log.Debugf("Moderately high CPU load (%.2f%%), setting workers to %d",
+		log.Debugf("Very high CPU load (%.2f%%), reducing workers to %d",
 			cpuLoad, adjustedParallel)
 		GetTopProcesses(5) // Log top processes when under heavy load
 
