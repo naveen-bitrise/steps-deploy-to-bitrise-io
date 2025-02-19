@@ -420,9 +420,13 @@ func genTestSuite(name string,
 
 	// Initialize atomic worker count
 	currentMaxParallel := atomic.Int32{}
-	activeWorkers := atomic.Int32{}
 	currentMaxParallel.Store(int32(AdjustMaxParallel()))
 	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
+
+	activeWorkers := atomic.Int32{}
+	// Track whether processing is complete
+	done := make(chan struct{})
+	defer close(done)
 
 	// Create channels
 	jobs := make(chan testJob, len(tests))
@@ -436,23 +440,29 @@ func genTestSuite(name string,
 
 	// Start health check and worker management
 	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop()
 
 	go func() {
-		for range ticker.C {
-			newCount := AdjustMaxParallel()
-			oldCount := currentMaxParallel.Swap(int32(newCount))
-			if oldCount != int32(newCount) {
-				log.Debugf("Adjusting worker count from %d to %d", oldCount, newCount)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				newCount := AdjustMaxParallel()
+				oldCount := int(currentMaxParallel.Load())
 
-				// If we need more workers, start them immediately
-				if newCount > int(oldCount) {
-					for i := oldCount; i < int32(newCount); i++ {
-						activeWorkers.Add(1)
-						go startWorker(int(i), jobs, results, &currentMaxParallel, &activeWorkers, xcresultPath, testResultDir)
+				if newCount != oldCount {
+					log.Debugf("Adjusting worker count from %d to %d", oldCount, newCount)
+					currentMaxParallel.Store(int32(newCount))
+
+					if newCount > oldCount {
+						for i := oldCount; i < newCount; i++ {
+							activeWorkers.Add(1)
+							go startWorker(i, jobs, results, &currentMaxParallel, &activeWorkers, xcresultPath, testResultDir)
+						}
 					}
 				}
-				// Reduction happens automatically in worker loops
+			case <-done:
+				log.Debugf("Health check goroutine stopping")
+				return
 			}
 		}
 	}()
