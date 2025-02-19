@@ -463,9 +463,10 @@ func genTestSuite(name string,
 
 	// Collect results with a safety check
 	receivedResults := 0
+	resultsComplete := false
 
-	// Keep collecting results until we get all of them
-	for receivedResults < len(tests) {
+	// Keep collecting results until we get all of them or determine it's impossible
+	for receivedResults < len(tests) && !resultsComplete {
 		select {
 		case result := <-results:
 			receivedResults++
@@ -475,9 +476,7 @@ func genTestSuite(name string,
 			}
 			testSuite.TestCases[result.idx] = result.testCase
 
-		// If no more results are coming but we haven't received all,
-		// check if jobs channel is empty and worker count is zero
-		case <-time.After(10 * time.Second):
+		case <-time.After(5 * time.Second):
 			activeCount := int(activeWorkers.Load())
 			log.Debugf("Waiting for results: received %d/%d, active workers: %d",
 				receivedResults, len(tests), activeCount)
@@ -486,8 +485,8 @@ func genTestSuite(name string,
 			if activeCount == 0 && receivedResults < len(tests) {
 				log.Errorf("All workers exited but only received %d/%d results",
 					receivedResults, len(tests))
-				// We could handle this by restarting workers or returning partial results
-				break
+				// Set flag to exit the outer loop
+				resultsComplete = true
 			}
 		}
 	}
