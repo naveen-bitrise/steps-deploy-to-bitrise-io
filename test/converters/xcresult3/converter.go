@@ -477,7 +477,7 @@ func genTestSuite(name string,
 
 		// If no more results are coming but we haven't received all,
 		// check if jobs channel is empty and worker count is zero
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 			activeCount := int(activeWorkers.Load())
 			log.Debugf("Waiting for results: received %d/%d, active workers: %d",
 				receivedResults, len(tests), activeCount)
