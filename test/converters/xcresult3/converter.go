@@ -410,9 +410,10 @@ func genTestSuite(name string,
 	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
 
 	activeWorkers := atomic.Int32{}
-	// Track whether processing is complete
-	done := make(chan struct{})
-	defer close(done)
+
+	// Create a stop channel for the health check
+	stopHealthCheck := make(chan struct{})
+	healthCheckDone := make(chan struct{})
 
 	// Create channels
 	jobs := make(chan testJob, len(tests))
@@ -428,6 +429,7 @@ func genTestSuite(name string,
 	ticker := time.NewTicker(15 * time.Second)
 
 	go func() {
+		defer close(healthCheckDone)
 		defer ticker.Stop()
 		for {
 			select {
@@ -446,7 +448,7 @@ func genTestSuite(name string,
 						}
 					}
 				}
-			case <-done:
+			case <-stopHealthCheck:
 				log.Debugf("Health check goroutine stopping")
 				return
 			}
@@ -459,17 +461,45 @@ func genTestSuite(name string,
 		go startWorker(i, jobs, results, &currentMaxParallel, &activeWorkers, xcresultPath, testResultDir)
 	}
 
-	// Collect results
-	for i := 0; i < len(tests); i++ {
-		result := <-results
-		if result.err != nil {
-			genTestSuiteErr = result.err
-			log.Debugf("Test failed: %v", result.err)
+	// Collect results with a safety check
+	receivedResults := 0
+
+	// Keep collecting results until we get all of them
+	for receivedResults < len(tests) {
+		select {
+		case result := <-results:
+			receivedResults++
+			if result.err != nil {
+				genTestSuiteErr = result.err
+				log.Debugf("Test failed: %v", result.err)
+			}
+			testSuite.TestCases[result.idx] = result.testCase
+
+		// If no more results are coming but we haven't received all,
+		// check if jobs channel is empty and worker count is zero
+		case <-time.After(5 * time.Second):
+			activeCount := int(activeWorkers.Load())
+			log.Debugf("Waiting for results: received %d/%d, active workers: %d",
+				receivedResults, len(tests), activeCount)
+
+			// If no active workers and we're still missing results, we have a problem
+			if activeCount == 0 && receivedResults < len(tests) {
+				log.Errorf("All workers exited but only received %d/%d results",
+					receivedResults, len(tests))
+				// We could handle this by restarting workers or returning partial results
+				break
+			}
 		}
-		testSuite.TestCases[result.idx] = result.testCase
 	}
 
 	log.Debugf("Test suite [%s] complete - %d tests in %v", name, len(tests), time.Since(suiteStart))
+
+	// Stop health check goroutine after all tests are done
+	close(stopHealthCheck)
+
+	// Wait for health check to finish cleanup
+	<-healthCheckDone
+
 	return testSuite, genTestSuiteErr
 }
 
