@@ -292,8 +292,8 @@ func AdjustMaxParallel(currentWorkers int) int {
 	case cpuLoad >= 98 || memoryLoad >= 98:
 		// Very high load - reduce to 1/4
 		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
-		GetTopProcesses(5)
 		if adjustedParallel != currentWorkers {
+			GetTopProcesses(5)
 			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
 				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
 		}
