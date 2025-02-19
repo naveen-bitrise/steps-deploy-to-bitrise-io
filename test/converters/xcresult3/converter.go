@@ -291,21 +291,21 @@ func AdjustMaxParallel() int {
 	switch {
 	case cpuLoad >= 90 || memoryLoad >= 90:
 		// Very high load - reduce to 1/4
-		adjustedParallel = max(1, baseMaxParallel/4)
+		adjustedParallel = max(1, baseMaxParallel/2)
 		log.Debugf("Very high CPU load (%.2f%%), reducing workers to %d",
 			cpuLoad, adjustedParallel)
 		GetTopProcesses(5) // Log top processes when under heavy load
 
 	case cpuLoad >= 80 || memoryLoad >= 80:
 		// High load - reduce to 1/2
-		adjustedParallel = max(1, baseMaxParallel/2)
+		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
 		log.Debugf("High CPU load (%.2f%%), reducing workers to %d",
 			cpuLoad, adjustedParallel)
 		GetTopProcesses(5) // Log top processes when under heavy load
 
 	case cpuLoad >= 60 || memoryLoad >= 60:
 		// Moderate high load - reduce by 25%
-		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
+		adjustedParallel = max(1, baseMaxParallel-1)
 		log.Debugf("Moderately high CPU load (%.2f%%), setting workers to %d",
 			cpuLoad, adjustedParallel)
 		GetTopProcesses(5) // Log top processes when under heavy load
@@ -439,7 +439,7 @@ func genTestSuite(name string,
 	close(jobs)
 
 	// Start health check and worker management
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 
 	go func() {
 		defer ticker.Stop()
