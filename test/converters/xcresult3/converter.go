@@ -426,7 +426,7 @@ func genTestSuite(name string,
 	close(jobs)
 
 	// Start health check and worker management
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 
 	go func() {
 		defer close(healthCheckDone)
