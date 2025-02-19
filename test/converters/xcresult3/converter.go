@@ -266,7 +266,7 @@ func GetTopProcesses(topN int) {
 }
 
 // AdjustMaxParallel adjusts maxParallel based on current CPU usage.
-func AdjustMaxParallel() int {
+func AdjustMaxParallel(currentWorkers int) int {
 	// Get current CPU load
 	cpuLoad, err := GetCPUUsage()
 	if err != nil {
@@ -283,8 +283,8 @@ func AdjustMaxParallel() int {
 	cpuCount := runtime.NumCPU()
 	baseMaxParallel := cpuCount * 2
 
-	log.Debugf("Current CPU Usage: %.2f%%, Memory Usage: %.2f%%, CPU Count: %d, Base parallel: %d",
-		cpuLoad, memoryLoad, cpuCount, baseMaxParallel)
+	log.Debugf("Current CPU Usage: %.2f%%, Memory Usage: %.2f%%, CPU Count: %d, Base parallel: %d, Active workers: %d",
+		cpuLoad, memoryLoad, cpuCount, baseMaxParallel, currentWorkers)
 
 	// More granular adjustment based on CPU load
 	var adjustedParallel int
@@ -292,23 +292,22 @@ func AdjustMaxParallel() int {
 	case cpuLoad >= 98 || memoryLoad >= 98:
 		// Very high load - reduce to 1/4
 		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
-		log.Debugf("Very high CPU load (%.2f%%), reducing workers to %d",
-			cpuLoad, adjustedParallel)
-		GetTopProcesses(5) // Log top processes when under heavy load
+		log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
+			cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
 
 	case cpuLoad <= 20:
 		// Very low load - can increase up to 4x
 		maxIncrease := cpuCount * 4
 		adjustedParallel = min(baseMaxParallel*2, maxIncrease)
-		log.Debugf("Very low CPU load (%.2f%%), increasing workers to %d",
-			cpuLoad, adjustedParallel)
+		log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
+			cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
 
 	case cpuLoad <= 40:
 		// Low load - can increase up to 2x
 		maxIncrease := cpuCount * 3
 		adjustedParallel = min(baseMaxParallel*3/2, maxIncrease)
-		log.Debugf("Low CPU load (%.2f%%), increasing workers to %d",
-			cpuLoad, adjustedParallel)
+		log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
+			cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
 
 	default:
 		// Moderate load - keep base parallel
@@ -406,7 +405,7 @@ func genTestSuite(name string,
 
 	// Initialize atomic worker count
 	currentMaxParallel := atomic.Int32{}
-	currentMaxParallel.Store(int32(AdjustMaxParallel()))
+	currentMaxParallel.Store(int32(AdjustMaxParallel(0)))
 	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
 
 	activeWorkers := atomic.Int32{}
@@ -434,7 +433,7 @@ func genTestSuite(name string,
 		for {
 			select {
 			case <-ticker.C:
-				newCount := AdjustMaxParallel()
+				newCount := AdjustMaxParallel(int(activeWorkers.Load()))
 				oldCount := int(currentMaxParallel.Load())
 
 				if newCount != oldCount {
