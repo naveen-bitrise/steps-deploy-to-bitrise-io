@@ -292,22 +292,28 @@ func AdjustMaxParallel(currentWorkers int) int {
 	case cpuLoad >= 98 || memoryLoad >= 98:
 		// Very high load - reduce to 1/4
 		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
-		log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
-			cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
+		if adjustedParallel != currentWorkers {
+			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
+				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
+		}
 
-	case cpuLoad <= 20:
+	case cpuLoad <= 40:
 		// Very low load - can increase up to 4x
 		maxIncrease := cpuCount * 4
 		adjustedParallel = min(baseMaxParallel*2, maxIncrease)
-		log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
-			cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
+		if adjustedParallel != currentWorkers {
+			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
+				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
+		}
 
-	case cpuLoad <= 40:
+	case cpuLoad <= 60:
 		// Low load - can increase up to 2x
 		maxIncrease := cpuCount * 3
 		adjustedParallel = min(baseMaxParallel*3/2, maxIncrease)
-		log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
-			cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
+		if adjustedParallel != currentWorkers {
+			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
+				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
+		}
 
 	default:
 		// Moderate load - keep base parallel
