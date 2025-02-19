@@ -292,6 +292,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 	case cpuLoad >= 98 || memoryLoad >= 98:
 		// Very high load - reduce to 1/4
 		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
+		GetTopProcesses(5)
 		if adjustedParallel != currentWorkers {
 			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
 				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
@@ -302,7 +303,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 		maxIncrease := cpuCount * 4
 		adjustedParallel = min(baseMaxParallel*2, maxIncrease)
 		if adjustedParallel != currentWorkers {
-			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
+			log.Debugf("Low load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
 				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
 		}
 
@@ -311,7 +312,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 		maxIncrease := cpuCount * 3
 		adjustedParallel = min(baseMaxParallel*3/2, maxIncrease)
 		if adjustedParallel != currentWorkers {
-			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
+			log.Debugf("Lower load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
 				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
 		}
 
@@ -363,11 +364,17 @@ func startWorker(workerID int,
 	defer activeWorkers.Add(-1)
 
 	for job := range jobs {
-		// Check if we should exit based on reduced worker count
-		if int32(workerID) >= currentMaxParallel.Load() {
-			log.Debugf("Worker %d stopping due to reduced worker count", workerID)
-			break
-		}
+		// Set up tracking for job completion
+		jobStarted := true
+		jobID := job.idx
+
+		// Defer logging for premature termination - convert Name to string if needed
+		defer func(started *bool, id int) {
+			if *started {
+				log.Debugf("ALERT: Worker %d terminated with job %d in progress",
+					workerID, id)
+			}
+		}(&jobStarted, jobID)
 
 		start := time.Now()
 		log.Debugf("Worker %d starting test: %s", workerID, job.test.Name)
@@ -386,7 +393,15 @@ func startWorker(workerID int,
 			duration: duration,
 		}
 
+		// Mark job as completed
+		jobStarted = false
 		log.Debugf("Worker %d finished test %s in %v", workerID, job.test.Name, duration)
+
+		// Check if we should exit based on reduced worker count
+		if int32(workerID) >= currentMaxParallel.Load() {
+			log.Debugf("Worker %d stopping due to reduced worker count", workerID)
+			break
+		}
 	}
 }
 
@@ -481,7 +496,7 @@ func genTestSuite(name string,
 			}
 			testSuite.TestCases[result.idx] = result.testCase
 
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 			activeCount := int(activeWorkers.Load())
 			log.Debugf("Waiting for results: received %d/%d, active workers: %d",
 				receivedResults, len(tests), activeCount)
