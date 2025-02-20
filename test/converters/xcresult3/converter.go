@@ -299,7 +299,16 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 	hash := sha256.Sum256(data)
 	_ = hash // prevent compiler optimization
 
-	return time.Since(start)
+	duration := time.Since(start)
+
+	// Log the benchmark result with context
+	if isInit {
+		log.Debugf("Initial system performance benchmark: %.2f ms", float64(duration)/float64(time.Millisecond))
+	} else {
+		log.Debugf("Current system performance benchmark: %.2f ms", float64(duration)/float64(time.Millisecond))
+	}
+
+	return duration
 }
 
 // AdjustMaxParallel adjusts maxParallel based on current CPU usage.
