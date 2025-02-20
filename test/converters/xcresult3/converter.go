@@ -295,7 +295,12 @@ func AdjustMaxParallel(currentWorkers int) int {
 		if adjustedParallel != currentWorkers {
 			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
 				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
-			GetTopProcesses(5)
+			// Run process collection in a separate goroutine
+			go func() {
+				log.Debugf("--- Top processes when high load detected ---")
+				GetTopProcesses(5)
+				log.Debugf("--- End top processes ---")
+			}()
 		}
 
 	case cpuLoad <= 40:
