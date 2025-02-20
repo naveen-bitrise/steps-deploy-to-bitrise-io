@@ -273,6 +273,8 @@ var baselinePerf time.Duration
 
 func benchmarkSystemPerformance(isInit bool) time.Duration {
 
+	var cpuLoadForDebug float64
+
 	if isInit {
 		// Wait for CPU load to decrease if it's extremely high
 		for i := 0; i < 5; i++ { // Try up to 5 times
@@ -280,6 +282,8 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 			if err == nil && cpuLoad < 80.0 {
 				break // CPU load is acceptable, proceed with benchmark
 			}
+
+			cpuLoadForDebug = cpuLoad
 
 			if i < 4 { // Don't sleep on the last iteration
 				log.Debugf("High CPU load (%.2f%%) detected, waiting before benchmarking...", cpuLoad)
@@ -320,7 +324,7 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 	duration := time.Since(start)
 	// Log the benchmark result with context
 	if isInit {
-		log.Debugf("Initial system performance benchmark: %.2f ms", float64(duration)/float64(time.Millisecond))
+		log.Debugf("Initial system performance benchmark: %.2f ms, CPU load (%.2f%%)", float64(duration)/float64(time.Millisecond), cpuLoadForDebug)
 	} else {
 		log.Debugf("Current system performance benchmark: %.2f ms", float64(duration)/float64(time.Millisecond))
 	}
@@ -335,7 +339,6 @@ func AdjustMaxParallel(currentWorkers int) int {
 	currentPerf := benchmarkSystemPerformance(false)
 
 	cpuCount := runtime.NumCPU()
-	baseMaxParallel := cpuCount * 2
 
 	log.Debugf("Current system performance: %v (baseline: %v, ratio: %.2f)",
 		currentPerf, baselinePerf, float64(currentPerf)/float64(baselinePerf))
@@ -343,7 +346,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 	// More granular adjustment based on CPU load
 	var adjustedParallel int
 
-	if currentPerf > time.Duration(float64(baselinePerf)*1.5) { // 50% slower than baseline
+	if currentPerf > time.Duration(float64(baselinePerf)*2) { // 50% slower than baseline
 		// Significant slowdown detected, reduce workers
 		adjustedParallel = max(1, int(float64(currentWorkers)*0.75))
 		if adjustedParallel != currentWorkers {
@@ -351,7 +354,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 				currentWorkers, adjustedParallel)
 		}
 		return adjustedParallel
-	} else if currentPerf < time.Duration(float64(baselinePerf)*0.7) { // 30% faster than baseline
+	} else if currentPerf < time.Duration(float64(baselinePerf)*0.9) { // 30% faster than baseline
 		// Tests running significantly faster, can increase workers
 		maxIncrease := cpuCount * 3
 		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxIncrease) // Increase by 25%
@@ -362,7 +365,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 		return adjustedParallel
 	}
 
-	return baseMaxParallel
+	return currentWorkers
 
 }
 
