@@ -296,14 +296,22 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 	// Standard benchmark operation
 	// For example, compute a hash of a fixed-size byte array
 	// More intensive computation
-	data := make([]byte, 100000) // Larger array
-	for j := 0; j < 10; j++ {    // Multiple iterations
-		for i := 0; i < 100000; i++ {
+	// More intensive computation
+	data := make([]byte, 500000) // 500K array
+	for j := 0; j < 20; j++ {    // 20 iterations
+		for i := 0; i < 500000; i++ {
 			data[i] = byte((i * j) % 256)
 		}
 		hash := sha256.Sum256(data)
 		// Use the hash result to prevent compiler optimization
 		data[0] = hash[0]
+
+		// Add some memory allocation/deallocation work
+		temp := make([]byte, 100000)
+		for k := 0; k < 100000; k++ {
+			temp[k] = byte(k ^ int(hash[k%32]))
+		}
+		data[1] = temp[0] // Prevent optimization
 	}
 
 	duration := time.Since(start)
