@@ -284,6 +284,9 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 			if i < 4 { // Don't sleep on the last iteration
 				log.Debugf("High CPU load (%.2f%%) detected, waiting before benchmarking...", cpuLoad)
 				time.Sleep(500 * time.Millisecond)
+			} else {
+				// We're on the last iteration (i == 4) and CPU is still high
+				log.Debugf("CPU load still high (%.2f%%) after waiting, proceeding with benchmark anyway", cpuLoad)
 			}
 		}
 	}
@@ -292,15 +295,18 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 
 	// Standard benchmark operation
 	// For example, compute a hash of a fixed-size byte array
-	data := make([]byte, 10000)
-	for i := 0; i < 10000; i++ {
-		data[i] = byte(i % 256)
+	// More intensive computation
+	data := make([]byte, 100000) // Larger array
+	for j := 0; j < 10; j++ {    // Multiple iterations
+		for i := 0; i < 100000; i++ {
+			data[i] = byte((i * j) % 256)
+		}
+		hash := sha256.Sum256(data)
+		// Use the hash result to prevent compiler optimization
+		data[0] = hash[0]
 	}
-	hash := sha256.Sum256(data)
-	_ = hash // prevent compiler optimization
 
 	duration := time.Since(start)
-
 	// Log the benchmark result with context
 	if isInit {
 		log.Debugf("Initial system performance benchmark: %.2f ms", float64(duration)/float64(time.Millisecond))
