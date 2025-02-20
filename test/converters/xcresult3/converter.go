@@ -1,6 +1,7 @@
 package xcresult3
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -8,7 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -266,52 +266,74 @@ func GetTopProcesses(topN int) {
 	}
 }
 
-const baselineDuration = 250 * time.Millisecond
+//const baselineDuration = 250 * time.Millisecond
+
+// Initialize baseline once at startup
+var baselinePerf time.Duration
+
+func benchmarkSystemPerformance(isInit bool) time.Duration {
+
+	if isInit {
+		// Wait for CPU load to decrease if it's extremely high
+		for i := 0; i < 5; i++ { // Try up to 5 times
+			cpuLoad, err := GetCPUUsage()
+			if err == nil && cpuLoad < 80.0 {
+				break // CPU load is acceptable, proceed with benchmark
+			}
+
+			if i < 4 { // Don't sleep on the last iteration
+				log.Debugf("High CPU load (%.2f%%) detected, waiting before benchmarking...", cpuLoad)
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}
+
+	start := time.Now()
+
+	// Standard benchmark operation
+	// For example, compute a hash of a fixed-size byte array
+	data := make([]byte, 10000)
+	for i := 0; i < 10000; i++ {
+		data[i] = byte(i % 256)
+	}
+	hash := sha256.Sum256(data)
+	_ = hash // prevent compiler optimization
+
+	return time.Since(start)
+}
 
 // AdjustMaxParallel adjusts maxParallel based on current CPU usage.
 func AdjustMaxParallel(currentWorkers int) int {
 
-	avgTestDuration := calculateAverageDuration()
-
-	// Get current CPU load
-	cpuLoad, err := GetCPUUsage()
-	if err != nil {
-		log.Debugf("Error getting CPU usage: %v, falling back to default", err)
-		return runtime.NumCPU() * 2 // Fallback to default
-	}
-
-	memoryLoad, err := GetMemoryUsage()
-	if err != nil {
-		log.Debugf("Error getting memory usage: %v, falling back to default", err)
-		return runtime.NumCPU() * 2 // Fallback to default
-	}
+	//avgTestDuration := calculateAverageDuration()
+	currentPerf := benchmarkSystemPerformance(false)
 
 	cpuCount := runtime.NumCPU()
 	baseMaxParallel := cpuCount * 2
 
-	log.Debugf("Current CPU Usage: %.2f%%, Memory Usage: %.2f%%, CPU Count: %d, Base parallel: %d, Active workers: %d",
-		cpuLoad, memoryLoad, cpuCount, baseMaxParallel, currentWorkers)
+	log.Debugf("Current system performance: %v (baseline: %v, ratio: %.2f)",
+		currentPerf, baselinePerf, float64(currentPerf)/float64(baselinePerf))
 
 	// More granular adjustment based on CPU load
 	var adjustedParallel int
 
 	// Check test duration first - if tests are running slower, reduce workers
-	if avgTestDuration > time.Duration(float64(baselineDuration)*1.5) { // 50% slower than baseline
+	if currentPerf > time.Duration(float64(baselinePerf)*1.5) { // 50% slower than baseline
 		// Significant slowdown detected, reduce workers
 		adjustedParallel = max(1, int(float64(currentWorkers)*0.75))
 		if adjustedParallel != currentWorkers {
-			log.Debugf("Test slowdown detected (avg: %v), adjusting workers: %d → %d",
-				avgTestDuration, currentWorkers, adjustedParallel)
+			log.Debugf("System slowdown detected, adjusting workers: %d → %d",
+				currentWorkers, adjustedParallel)
 			go GetTopProcesses(5) // Non-blocking process info
 		}
 		return adjustedParallel
-	} else if avgTestDuration < time.Duration(float64(baselineDuration)*0.7) { // 30% faster than baseline
+	} else if currentPerf < time.Duration(float64(baselinePerf)*0.7) { // 30% faster than baseline
 		// Tests running significantly faster, can increase workers
 		maxIncrease := cpuCount * 3
 		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxIncrease) // Increase by 25%
 		if adjustedParallel != currentWorkers {
-			log.Debugf("Tests running faster than baseline (avg: %v), increasing workers: %d → %d",
-				avgTestDuration, currentWorkers, adjustedParallel)
+			log.Debugf("System running faster than baseline, increasing workers: %d → %d",
+				currentWorkers, adjustedParallel)
 		}
 		return adjustedParallel
 	}
@@ -346,12 +368,6 @@ type testResult struct {
 	duration time.Duration
 }
 
-// Track recent test durations across all workers
-var (
-	durationsMutex  sync.RWMutex
-	recentDurations = make([]time.Duration, 0, 100)
-)
-
 // startWorker extracts worker logic for reuse
 func startWorker(workerID int,
 	jobs <-chan testJob,
@@ -382,9 +398,6 @@ func startWorker(workerID int,
 		testCase, err := genTestCase(job.test, xcresultPath, testResultDir)
 		duration := time.Since(start)
 
-		// Just add the duration to the collection
-		storeDuration(duration)
-
 		if duration > time.Second*10 {
 			log.Debugf("Slow test case on worker %d: test %s took %v", workerID, job.test.Name, duration)
 		}
@@ -406,35 +419,6 @@ func startWorker(workerID int,
 			break
 		}
 	}
-}
-
-// storeDuration adds a new duration to our collection
-func storeDuration(newDuration time.Duration) {
-	durationsMutex.Lock()
-	defer durationsMutex.Unlock()
-
-	recentDurations = append(recentDurations, newDuration)
-
-	// Keep only the most recent 50 durations
-	if len(recentDurations) > 50 {
-		recentDurations = recentDurations[len(recentDurations)-50:]
-	}
-}
-
-// Calculate the average only when needed
-func calculateAverageDuration() time.Duration {
-	durationsMutex.RLock()
-	defer durationsMutex.RUnlock()
-
-	if len(recentDurations) == 0 {
-		return baselineDuration // Default baseline
-	}
-
-	var total time.Duration
-	for _, d := range recentDurations {
-		total += d
-	}
-	return total / time.Duration(len(recentDurations))
 }
 
 func genTestSuite(name string,
@@ -462,6 +446,7 @@ func genTestSuite(name string,
 	currentMaxParallel.Store(int32(maxParallel))
 	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
 
+	baselinePerf = benchmarkSystemPerformance(true)
 	activeWorkers := atomic.Int32{}
 
 	// Create a stop channel for the health check
