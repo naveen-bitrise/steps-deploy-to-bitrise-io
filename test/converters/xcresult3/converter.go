@@ -284,6 +284,9 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 			if i < 4 { // Don't sleep on the last iteration
 				log.Debugf("High CPU load (%.2f%%) detected, waiting before benchmarking...", cpuLoad)
 				time.Sleep(500 * time.Millisecond)
+				if i == 0 {
+					go GetTopProcesses(5) // Non-blocking process info
+				}
 			} else {
 				// We're on the last iteration (i == 4) and CPU is still high
 				log.Debugf("CPU load still high (%.2f%%) after waiting, proceeding with benchmark anyway", cpuLoad)
@@ -346,7 +349,6 @@ func AdjustMaxParallel(currentWorkers int) int {
 		if adjustedParallel != currentWorkers {
 			log.Debugf("System slowdown detected, adjusting workers: %d → %d",
 				currentWorkers, adjustedParallel)
-			go GetTopProcesses(5) // Non-blocking process info
 		}
 		return adjustedParallel
 	} else if currentPerf < time.Duration(float64(baselinePerf)*0.7) { // 30% faster than baseline
