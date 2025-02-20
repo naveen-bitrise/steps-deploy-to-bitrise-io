@@ -340,7 +340,6 @@ func AdjustMaxParallel(currentWorkers int) int {
 	// More granular adjustment based on CPU load
 	var adjustedParallel int
 
-	// Check test duration first - if tests are running slower, reduce workers
 	if currentPerf > time.Duration(float64(baselinePerf)*1.5) { // 50% slower than baseline
 		// Significant slowdown detected, reduce workers
 		adjustedParallel = max(1, int(float64(currentWorkers)*0.75))
