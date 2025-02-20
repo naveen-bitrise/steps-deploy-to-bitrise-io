@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -265,8 +266,13 @@ func GetTopProcesses(topN int) {
 	}
 }
 
+const baselineDuration = 250 * time.Millisecond
+
 // AdjustMaxParallel adjusts maxParallel based on current CPU usage.
 func AdjustMaxParallel(currentWorkers int) int {
+
+	avgTestDuration := calculateAverageDuration()
+
 	// Get current CPU load
 	cpuLoad, err := GetCPUUsage()
 	if err != nil {
@@ -288,47 +294,30 @@ func AdjustMaxParallel(currentWorkers int) int {
 
 	// More granular adjustment based on CPU load
 	var adjustedParallel int
-	switch {
-	case cpuLoad >= 98 || memoryLoad >= 98:
-		// Very high load - reduce to 1/4
-		adjustedParallel = max(1, int(float64(baseMaxParallel)*0.75))
-		if adjustedParallel != currentWorkers {
-			log.Debugf("High load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
-				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
-			// Run process collection in a separate goroutine
-			go func() {
-				log.Debugf("--- Top processes when high load detected ---")
-				GetTopProcesses(5)
-				log.Debugf("--- End top processes ---")
-			}()
-		}
 
-	case cpuLoad <= 40:
-		// Very low load - can increase up to 4x
-		maxIncrease := cpuCount * 4
-		adjustedParallel = min(baseMaxParallel*2, maxIncrease)
+	// Check test duration first - if tests are running slower, reduce workers
+	if avgTestDuration > time.Duration(float64(baselineDuration)*1.5) { // 50% slower than baseline
+		// Significant slowdown detected, reduce workers
+		adjustedParallel = max(1, int(float64(currentWorkers)*0.75))
 		if adjustedParallel != currentWorkers {
-			log.Debugf("Low load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
-				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
+			log.Debugf("Test slowdown detected (avg: %v), adjusting workers: %d → %d",
+				avgTestDuration, currentWorkers, adjustedParallel)
+			go GetTopProcesses(5) // Non-blocking process info
 		}
-
-	case cpuLoad <= 60:
-		// Low load - can increase up to 2x
+		return adjustedParallel
+	} else if avgTestDuration < time.Duration(float64(baselineDuration)*0.7) { // 30% faster than baseline
+		// Tests running significantly faster, can increase workers
 		maxIncrease := cpuCount * 3
-		adjustedParallel = min(baseMaxParallel*3/2, maxIncrease)
+		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxIncrease) // Increase by 25%
 		if adjustedParallel != currentWorkers {
-			log.Debugf("Lower load detected (CPU: %.2f%%, Memory: %.2f%%), adjusting workers: from %d → to %d",
-				cpuLoad, memoryLoad, currentWorkers, adjustedParallel)
+			log.Debugf("Tests running faster than baseline (avg: %v), increasing workers: %d → %d",
+				avgTestDuration, currentWorkers, adjustedParallel)
 		}
-
-	default:
-		// Moderate load - keep base parallel
-		adjustedParallel = baseMaxParallel
-		log.Debugf("Moderate CPU load (%.2f%%), maintaining default workers at %d",
-			cpuLoad, adjustedParallel)
+		return adjustedParallel
 	}
 
-	return adjustedParallel
+	return baseMaxParallel
+
 }
 
 func max(a, b int) int {
@@ -356,6 +345,12 @@ type testResult struct {
 	err      error
 	duration time.Duration
 }
+
+// Track recent test durations across all workers
+var (
+	durationsMutex  sync.RWMutex
+	recentDurations = make([]time.Duration, 0, 100)
+)
 
 // startWorker extracts worker logic for reuse
 func startWorker(workerID int,
@@ -387,6 +382,9 @@ func startWorker(workerID int,
 		testCase, err := genTestCase(job.test, xcresultPath, testResultDir)
 		duration := time.Since(start)
 
+		// Just add the duration to the collection
+		storeDuration(duration)
+
 		if duration > time.Second*10 {
 			log.Debugf("Slow test case on worker %d: test %s took %v", workerID, job.test.Name, duration)
 		}
@@ -410,6 +408,35 @@ func startWorker(workerID int,
 	}
 }
 
+// storeDuration adds a new duration to our collection
+func storeDuration(newDuration time.Duration) {
+	durationsMutex.Lock()
+	defer durationsMutex.Unlock()
+
+	recentDurations = append(recentDurations, newDuration)
+
+	// Keep only the most recent 50 durations
+	if len(recentDurations) > 50 {
+		recentDurations = recentDurations[len(recentDurations)-50:]
+	}
+}
+
+// Calculate the average only when needed
+func calculateAverageDuration() time.Duration {
+	durationsMutex.RLock()
+	defer durationsMutex.RUnlock()
+
+	if len(recentDurations) == 0 {
+		return baselineDuration // Default baseline
+	}
+
+	var total time.Duration
+	for _, d := range recentDurations {
+		total += d
+	}
+	return total / time.Duration(len(recentDurations))
+}
+
 func genTestSuite(name string,
 	summary ActionTestPlanRunSummaries,
 	tests []ActionTestSummaryGroup,
@@ -431,7 +458,8 @@ func genTestSuite(name string,
 
 	// Initialize atomic worker count
 	currentMaxParallel := atomic.Int32{}
-	currentMaxParallel.Store(int32(AdjustMaxParallel(0)))
+	//currentMaxParallel.Store(int32(AdjustMaxParallel(0)))
+	currentMaxParallel.Store(int32(maxParallel))
 	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
 
 	activeWorkers := atomic.Int32{}
