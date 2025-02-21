@@ -273,31 +273,6 @@ var baselinePerf time.Duration
 
 func benchmarkSystemPerformance(isInit bool) time.Duration {
 
-	var cpuLoadForDebug float64
-
-	if isInit {
-		// Wait for CPU load to decrease if it's extremely high
-		for i := 0; i < 5; i++ { // Try up to 5 times
-			cpuLoad, err := GetCPUUsage()
-			if err == nil && cpuLoad < 80.0 {
-				break // CPU load is acceptable, proceed with benchmark
-			}
-
-			cpuLoadForDebug = cpuLoad
-
-			if i < 4 { // Don't sleep on the last iteration
-				log.Debugf("High CPU load (%.2f%%) detected, waiting before benchmarking...", cpuLoad)
-				time.Sleep(500 * time.Millisecond)
-				if i == 0 {
-					go GetTopProcesses(5) // Non-blocking process info
-				}
-			} else {
-				// We're on the last iteration (i == 4) and CPU is still high
-				log.Debugf("CPU load still high (%.2f%%) after waiting, proceeding with benchmark anyway", cpuLoad)
-			}
-		}
-	}
-
 	start := time.Now()
 
 	// Standard benchmark operation
@@ -322,11 +297,35 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 	}
 
 	duration := time.Since(start)
-	// Log the benchmark result with context
+
 	if isInit {
-		log.Debugf("Initial system performance benchmark: %.2f ms, CPU load (%.2f%%)", float64(duration)/float64(time.Millisecond), cpuLoadForDebug)
-	} else {
-		log.Debugf("Current system performance benchmark: %.2f ms", float64(duration)/float64(time.Millisecond))
+		cpuLoad, err := GetCPUUsage()
+
+		if err != nil {
+			cpuLoad = 50.0 // Default assumption if can't get CPU load
+		}
+
+		const targetCpuLoad = 25.0 // Target "normal" CPU load for baseline
+
+		// Avoid extreme adjustments
+		if cpuLoad > 10.0 && cpuLoad < 95.0 {
+			// Adjust the duration to what it would be at 25% CPU load
+			// Use a conservative linear model
+			scaleFactor := (100.0 - targetCpuLoad) / (100.0 - cpuLoad)
+			adjustedDuration := time.Duration(float64(duration) * scaleFactor)
+
+			log.Debugf("Initial system performance benchmark: %.2f ms (measured at %.2f%% CPU) → %.2f ms (normalized to %.2f%% CPU)",
+				float64(duration)/float64(time.Millisecond),
+				cpuLoad,
+				float64(adjustedDuration)/float64(time.Millisecond),
+				targetCpuLoad)
+
+			return adjustedDuration
+		} else {
+			log.Debugf("Initial system performance benchmark: %.2f ms (measured at %.2f%% CPU)",
+				float64(duration)/float64(time.Millisecond),
+				cpuLoad)
+		}
 	}
 
 	return duration
@@ -343,19 +342,18 @@ func AdjustMaxParallel(currentWorkers int) int {
 	log.Debugf("Current system performance: %v (baseline: %v, ratio: %.2f)",
 		currentPerf, baselinePerf, float64(currentPerf)/float64(baselinePerf))
 
-	// More granular adjustment based on CPU load
 	var adjustedParallel int
 
-	if currentPerf > time.Duration(float64(baselinePerf)*2) { // 50% slower than baseline
-		// Significant slowdown detected, reduce workers
+	if currentPerf > time.Duration(float64(baselinePerf)*4) {
+		// Benchmark running significantly slower, can increase workers
 		adjustedParallel = max(1, int(float64(currentWorkers)*0.75))
 		if adjustedParallel != currentWorkers {
 			log.Debugf("System slowdown detected, adjusting workers: %d → %d",
 				currentWorkers, adjustedParallel)
 		}
 		return adjustedParallel
-	} else if currentPerf < time.Duration(float64(baselinePerf)*0.9) { // 30% faster than baseline
-		// Tests running significantly faster, can increase workers
+	} else if currentPerf < time.Duration(float64(baselinePerf)*2.5) {
+		// Benchmark running significantly faster, can increase workers
 		maxIncrease := cpuCount * 3
 		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxIncrease) // Increase by 25%
 		if adjustedParallel != currentWorkers {
