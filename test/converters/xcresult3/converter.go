@@ -273,6 +273,17 @@ var baselinePerf time.Duration
 
 func benchmarkSystemPerformance(isInit bool) time.Duration {
 
+	var cpuLoad float64
+	var err error
+
+	if isInit {
+		cpuLoad, err = GetCPUUsage()
+
+		if err != nil {
+			cpuLoad = 50.0 // Default assumption if can't get CPU load
+		}
+	}
+
 	start := time.Now()
 
 	// Standard benchmark operation
@@ -299,11 +310,11 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 	duration := time.Since(start)
 
 	if isInit {
-		cpuLoad, err := GetCPUUsage()
+		/*cpuLoad, err := GetCPUUsage()
 
 		if err != nil {
 			cpuLoad = 50.0 // Default assumption if can't get CPU load
-		}
+		}*/
 
 		const targetCpuLoad = 25.0 // Target "normal" CPU load for baseline
 
