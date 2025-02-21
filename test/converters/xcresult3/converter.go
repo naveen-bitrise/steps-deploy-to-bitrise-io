@@ -310,13 +310,7 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 	duration := time.Since(start)
 
 	if isInit {
-		/*cpuLoad, err := GetCPUUsage()
-
-		if err != nil {
-			cpuLoad = 50.0 // Default assumption if can't get CPU load
-		}*/
-
-		const targetCpuLoad = 25.0 // Target "normal" CPU load for baseline
+		/*const targetCpuLoad = 25.0 // Target "normal" CPU load for baseline
 
 		// Avoid extreme adjustments
 		if cpuLoad > 10.0 && cpuLoad < 95.0 {
@@ -332,11 +326,11 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 				targetCpuLoad)
 
 			return adjustedDuration
-		} else {
-			log.Debugf("Initial system performance benchmark: %.2f ms (measured at %.2f%% CPU)",
-				float64(duration)/float64(time.Millisecond),
-				cpuLoad)
-		}
+		} else {} */
+		log.Debugf("Initial system performance benchmark: %.2f ms (measured at %.2f%% CPU)",
+			float64(duration)/float64(time.Millisecond),
+			cpuLoad)
+
 	}
 
 	return duration
@@ -355,7 +349,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 
 	var adjustedParallel int
 
-	if currentPerf > time.Duration(float64(baselinePerf)*4) { //baseline at 25% CPU, 4x should be indicator of degrading performance
+	if currentPerf > time.Duration(float64(baselinePerf)*2) { //2x should be indicator of degrading performance
 		// Benchmark running significantly faster, can increase workers
 		adjustedParallel = max(1, int(float64(currentWorkers)*0.75))
 		if adjustedParallel != currentWorkers {
@@ -363,7 +357,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 				currentWorkers, adjustedParallel)
 		}
 		return adjustedParallel
-	} else if currentPerf < time.Duration(float64(baselinePerf)*2.5) { //baseline at 25% CPU, 2.5x should be indicator of available performance
+	} else if currentPerf < time.Duration(float64(baselinePerf)) { //should be indicator of available performance
 		// Benchmark running significantly faster, can increase workers
 		maxIncrease := cpuCount * 3
 		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxIncrease) // Increase by 25%
