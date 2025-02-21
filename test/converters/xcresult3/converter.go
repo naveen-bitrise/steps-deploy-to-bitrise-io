@@ -322,7 +322,7 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 		if cpuLoad > 10.0 && cpuLoad < 95.0 {
 			// Adjust the duration to what it would be at 25% CPU load
 			// Use a conservative linear model
-			scaleFactor := (100.0 - targetCpuLoad) / (100.0 - cpuLoad)
+			scaleFactor := (100.0 - cpuLoad) / (100.0 - targetCpuLoad)
 			adjustedDuration := time.Duration(float64(duration) * scaleFactor)
 
 			log.Debugf("Initial system performance benchmark: %.2f ms (measured at %.2f%% CPU) → %.2f ms (normalized to %.2f%% CPU)",
