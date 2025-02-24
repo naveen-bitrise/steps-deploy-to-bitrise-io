@@ -336,13 +336,11 @@ func benchmarkSystemPerformance(isInit bool) time.Duration {
 	return duration
 }
 
-// AdjustMaxParallel adjusts maxParallel based on current CPU usage.
-func AdjustMaxParallel(currentWorkers int) int {
+// AdjustMaxParallel adjusts maxParallel based on performance.
+func AdjustMaxParallel(currentWorkers int, maxParallel int) int {
 
 	//avgTestDuration := calculateAverageDuration()
 	currentPerf := benchmarkSystemPerformance(false)
-
-	cpuCount := runtime.NumCPU()
 
 	log.Debugf("Current system performance: %v (baseline: %v, ratio: %.2f)",
 		currentPerf, baselinePerf, float64(currentPerf)/float64(baselinePerf))
@@ -359,8 +357,7 @@ func AdjustMaxParallel(currentWorkers int) int {
 		return adjustedParallel
 	} else if currentPerf < time.Duration(float64(baselinePerf)) { //should be indicator of available performance
 		// Benchmark running significantly faster, can increase workers
-		maxIncrease := cpuCount * 3
-		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxIncrease) // Increase by 25%
+		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxParallel) // Increase by 25%
 		if adjustedParallel != currentWorkers {
 			log.Debugf("System running faster than baseline, increasing workers: %d → %d",
 				currentWorkers, adjustedParallel)
@@ -451,6 +448,21 @@ func startWorker(workerID int,
 	}
 }
 
+func adjustStartMaxParallel(maxParallel int) int {
+	cpuLoad, err := GetCPUUsage()
+
+	if err != nil {
+		cpuLoad = 50.0 // Default assumption if can't get CPU load
+	}
+
+	if cpuLoad > 50 {
+		log.Debugf("Adjusting intial worker count from %d to %d becuase of %.2f%% CPU load", maxParallel, max(1, int(float64(maxParallel)*0.75)), cpuLoad)
+		return max(1, int(float64(maxParallel)*0.75))
+	}
+
+	return maxParallel
+}
+
 func genTestSuite(name string,
 	summary ActionTestPlanRunSummaries,
 	tests []ActionTestSummaryGroup,
@@ -472,8 +484,8 @@ func genTestSuite(name string,
 
 	// Initialize atomic worker count
 	currentMaxParallel := atomic.Int32{}
-	//currentMaxParallel.Store(int32(AdjustMaxParallel(0)))
-	currentMaxParallel.Store(int32(maxParallel))
+
+	currentMaxParallel.Store(int32(adjustStartMaxParallel(maxParallel)))
 	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
 
 	baselinePerf = benchmarkSystemPerformance(true)
@@ -502,7 +514,7 @@ func genTestSuite(name string,
 		for {
 			select {
 			case <-ticker.C:
-				newCount := AdjustMaxParallel(int(activeWorkers.Load()))
+				newCount := AdjustMaxParallel(int(activeWorkers.Load()), maxParallel)
 				oldCount := int(currentMaxParallel.Load())
 
 				if newCount != oldCount {
