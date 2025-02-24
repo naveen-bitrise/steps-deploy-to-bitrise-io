@@ -448,7 +448,7 @@ func startWorker(workerID int,
 	}
 }
 
-func adjustStartMaxParallel(maxParallel int) int {
+func AdjustStartMaxParallel(maxParallel int) int {
 	cpuLoad, err := GetCPUUsage()
 
 	if err != nil {
@@ -488,7 +488,7 @@ func genTestSuite(name string,
 	// Initialize atomic worker count
 	currentMaxParallel := atomic.Int32{}
 
-	currentMaxParallel.Store(int32(adjustStartMaxParallel(maxParallel)))
+	currentMaxParallel.Store(int32(AdjustStartMaxParallel(maxParallel)))
 	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
 
 	baselinePerf = benchmarkSystemPerformance(true)
