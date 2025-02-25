@@ -455,12 +455,12 @@ func AdjustStartMaxParallel(maxParallel int) int {
 		cpuLoad = 50.0 // Default assumption if can't get CPU load
 	}
 
-	if cpuLoad > 50 {
+	if cpuLoad > 75 {
+		log.Debugf("Adjusting intial worker count from %d to %d becuase of %.2f%% CPU load", maxParallel, max(1, int(float64(maxParallel)*0.5)), cpuLoad)
+		return max(1, int(float64(maxParallel)*0.5))
+	} else if cpuLoad > 50 {
 		log.Debugf("Adjusting intial worker count from %d to %d becuase of %.2f%% CPU load", maxParallel, max(1, int(float64(maxParallel)*0.75)), cpuLoad)
 		return max(1, int(float64(maxParallel)*0.75))
-	} else if cpuLoad > 70 {
-		log.Debugf("Adjusting intial worker count from %d to %d becuase of %.2f%% CPU load", maxParallel, max(1, int(float64(maxParallel)*0.6)), cpuLoad)
-		return max(1, int(float64(maxParallel)*0.5))
 	}
 
 	return maxParallel
