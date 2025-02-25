@@ -355,7 +355,7 @@ func AdjustMaxParallel(currentWorkers int, maxParallel int) int {
 				currentWorkers, adjustedParallel)
 		}
 		return adjustedParallel
-	} else if currentPerf < time.Duration(float64(baselinePerf)) { //should be indicator of available performance
+	} else if currentPerf < time.Duration(float64(baselinePerf)*1.4) { //should be indicator of available performance
 		// Benchmark running significantly faster, can increase workers
 		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxParallel) // Increase by 25%
 		if adjustedParallel != currentWorkers {
