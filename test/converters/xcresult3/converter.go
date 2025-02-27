@@ -357,7 +357,14 @@ func AdjustMaxParallel(currentWorkers int, maxParallel int) int {
 		return adjustedParallel
 	} else if currentPerf < time.Duration(float64(baselinePerf)*1.4) { //should be indicator of available performance
 		// Benchmark running significantly faster, can increase workers
-		adjustedParallel = min(int(float64(currentWorkers)*1.25), maxParallel) // Increase by 25%
+		var numCPU = runtime.NumCPU()
+		var increaseFactor = 1.25
+		if currentWorkers <= numCPU/2 {
+			increaseFactor = 2
+		} else if currentWorkers <= numCPU {
+			increaseFactor = 1.5
+		}
+		adjustedParallel = min(int(float64(currentWorkers)*increaseFactor), maxParallel) // Increase by 25%
 		if adjustedParallel != currentWorkers {
 			log.Debugf("System running faster than baseline, increasing workers: %d → %d",
 				currentWorkers, adjustedParallel)
