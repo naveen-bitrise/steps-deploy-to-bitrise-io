@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -269,7 +270,14 @@ func GetTopProcesses(topN int) {
 //const baselineDuration = 250 * time.Millisecond
 
 // Initialize baseline once at startup
-var baselinePerf time.Duration
+//var baselinePerf time.Duration
+
+var (
+	// Package-level variables
+	baselinePerf       time.Duration
+	initialSetupDone   sync.Once
+	currentMaxParallel atomic.Int32
+)
 
 func benchmarkSystemPerformance(isInit bool) time.Duration {
 
@@ -492,13 +500,16 @@ func genTestSuite(name string,
 		TestCases: make([]junit.TestCase, len(tests)),
 	}
 
-	// Initialize atomic worker count
-	currentMaxParallel := atomic.Int32{}
+	// Initialize the worker count and baseline performance only once
+	initialSetupDone.Do(func() {
+		adjustedValue := AdjustStartMaxParallel(maxParallel)
+		currentMaxParallel.Store(int32(adjustedValue))
+		baselinePerf = benchmarkSystemPerformance(true)
+		log.Debugf("Initial setup completed - worker count: %d", currentMaxParallel.Load())
+	})
 
-	currentMaxParallel.Store(int32(AdjustStartMaxParallel(maxParallel)))
-	log.Debugf("Initial worker count: %d", currentMaxParallel.Load())
+	log.Debugf("Using worker count: %d", currentMaxParallel.Load())
 
-	baselinePerf = benchmarkSystemPerformance(true)
 	activeWorkers := atomic.Int32{}
 
 	// Create a stop channel for the health check
@@ -602,13 +613,17 @@ func genTestCase(test ActionTestSummaryGroup, xcresultPath, testResultDir string
 		}
 	}
 
-	testSummary, err := test.loadActionTestSummary(xcresultPath)
-	// Ignoring the SummaryNotFoundError error is on purpose because not having an action summary is a valid use case.
-	// For example, failed tests will always have a summary, but successful ones might have it or might not.
-	// If they do not have it, then that means that they did not log anything to the console,
-	// and they were not executed as device configuration tests.
-	if err != nil && !errors.Is(err, ErrSummaryNotFound) {
-		return junit.TestCase{}, err
+	var testSummary ActionTestSummary
+	var err error
+	if test.TestStatus.Value == "Failure" {
+		testSummary, err = test.loadActionTestSummary(xcresultPath)
+		// Ignoring the SummaryNotFoundError error is on purpose because not having an action summary is a valid use case.
+		// For example, failed tests will always have a summary, but successful ones might have it or might not.
+		// If they do not have it, then that means that they did not log anything to the console,
+		// and they were not executed as device configuration tests.
+		if err != nil && !errors.Is(err, ErrSummaryNotFound) {
+			return junit.TestCase{}, err
+		}
 	}
 
 	var failure *junit.Failure
@@ -634,9 +649,11 @@ func genTestCase(test ActionTestSummaryGroup, xcresultPath, testResultDir string
 		skipped = &junit.Skipped{}
 	}
 
+	/* Commenting off export screenshots
 	if err := test.exportScreenshots(xcresultPath, testResultDir); err != nil {
 		return junit.TestCase{}, err
 	}
+	*/
 
 	return junit.TestCase{
 		Name:              test.Name.Value,
